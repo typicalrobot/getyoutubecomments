@@ -1,0 +1,103 @@
+function getYouTubeCommentsFromPlaylist(playlistId) {
+  var apiKey = 'YOUR API KEY ';
+  var playlistUrl = 'https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=' + encodeURIComponent(playlistId) + '&maxResults=50&key=' + apiKey;
+  var videoIds = [];
+  var nextPageToken = '';
+
+   Logger.log('Playlist ID: ' + playlistId);
+
+  try {
+    do {
+      var response = UrlFetchApp.fetch(playlistUrl + (nextPageToken ? '&pageToken=' + nextPageToken : ''), {
+        muteHttpExceptions: true
+      });
+
+      if (response.getResponseCode() !== 200) {
+        Logger.log('Error: Non-200 response code: ' + response.getResponseCode());
+        Logger.log(response.getContentText());
+        return;
+      }
+
+      var json = JSON.parse(response.getContentText());
+      if (json.error) {
+        Logger.log('Error fetching playlist: ' + json.error.message);
+        return;
+      }
+
+      for (var i = 0; i < json.items.length; i++) {
+        var videoId = json.items[i].snippet.resourceId.videoId;
+        videoIds.push(videoId);
+      }
+      nextPageToken = json.nextPageToken;
+    } while (nextPageToken);
+
+    if (videoIds.length === 0) {
+      Logger.log('No videos found in the playlist.');
+      return;
+    }
+
+    batchProcessVideos(videoIds, apiKey);
+
+  } catch (e) {
+    Logger.log('Error: ' + e.message);
+  }
+}
+
+function batchProcessVideos(videoIds, apiKey) {
+  var batchSize = 5;
+  for (var i = 0; i < videoIds.length; i += batchSize) {
+    var batch = videoIds.slice(i, i + batchSize);
+    batch.forEach(function(videoId) {
+      fetchComments(videoId, apiKey);
+    });
+  }
+}
+
+function fetchComments(videoId, apiKey) {
+  var url = 'https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId=' + videoId + '&maxResults=100&key=' + apiKey;
+  var nextPageToken = '';
+  var commentsData = [["Type", "Author Name", "Author URL", "Comment Text", "Likes", "Published At"]]; // Add headers for the sheet
+
+  try {
+    do {
+      var response = UrlFetchApp.fetch(url + (nextPageToken ? '&pageToken=' + nextPageToken : ''), {
+        muteHttpExceptions: true
+      });
+
+      if (response.getResponseCode() !== 200) {
+        Logger.log('Error: Non-200 response code: ' + response.getResponseCode());
+        Logger.log(response.getContentText());
+        return;
+      }
+
+      var json = JSON.parse(response.getContentText());
+      if (json.error) {
+        Logger.log('Error fetching comments: ' + json.error.message);
+        return;
+      }
+
+      for (var i = 0; i < json.items.length; i++) {
+        var topComment = json.items[i].snippet.topLevelComment.snippet;
+        commentsData.push(["Comment", topComment.authorDisplayName, topComment.authorChannelUrl, topComment.textDisplay, topComment.likeCount, topComment.publishedAt]);
+
+        if (json.items[i].replies) {
+          var replies = json.items[i].replies.comments;
+          for (var j = 0; j < replies.length; j++) {
+            var reply = replies[j].snippet;
+            commentsData.push(["Reply", reply.authorDisplayName, reply.authorChannelUrl, reply.textDisplay, reply.likeCount, reply.publishedAt]);
+          }
+        }
+      }
+      nextPageToken = json.nextPageToken;
+    } while (nextPageToken);
+
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().insertSheet(videoId);
+    sheet.getRange(1, 1, commentsData.length, 6).setValues(commentsData);
+
+  } catch (e) {
+    Logger.log('Error: ' + e.message);
+  }
+}
+
+// Example usage
+getYouTubeCommentsFromPlaylist("YOUR PLAYLIST ID");
